@@ -24,18 +24,18 @@ bot = telebot.TeleBot(BOT_TOKEN)
 # অটো-রিয়েকশন ইমোজি
 REACTION_EMOJI = "🔥"
 
-# চ্যানেলে নতুন কোনো পোস্ট আসলেই রিয়েকশন দেবে
+# চ্যানেল পোস্ট এবং সাধারণ মেসেজ/গ্রুপ মেসেজ উভয় ক্ষেত্রেই রিয়েকশন দেবে
 @bot.channel_post_handler(func=lambda message: True)
+@bot.message_handler(func=lambda message: True)
 def auto_react(message):
     try:
-        # Telebot-এর সঠিক রিয়েকশন ফরম্যাট
         reaction_obj = telebot.types.ReactionTypeEmoji(type="emoji", emoji=REACTION_EMOJI)
         bot.set_message_reaction(
             chat_id=message.chat.id,
             message_id=message.message_id,
             reaction=[reaction_obj]
         )
-        print(f"Post ID {message.message_id}-এ রিয়েকশন দেওয়া হয়েছে!")
+        print(f"Message ID {message.message_id}-এ রিয়েকশন দেওয়া হয়েছে!")
     except Exception as e:
         print(f"এরর: {e}")
 
