@@ -18,13 +18,13 @@ def run_web():
 Thread(target=run_web, daemon=True).start()
 
 # ------ টেলিগ্রাম বট কনফিগারেশন ------
-BOT_TOKEN = "8858854627:AAHkOHPcYDrkdp5wpeXaYZsZrpPuUAYtGV4"
+BOT_TOKEN = "8858854627:AAF2bSIK_NjutApjPrc35hGVLh5MMRreQzk"
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# অটো-রিয়েকশন ইমোজি
+# অটো-রিয়েকশন ইমোজি (এখানে ইচ্ছেমতো ইমোজি দিতে পারেন)
 REACTION_EMOJI = "🔥"
 
-# চ্যানেল পোস্ট এবং সাধারণ মেসেজ/গ্রুপ মেসেজ উভয় ক্ষেত্রেই রিয়েকশন দেবে
+# চ্যানেল পোস্ট, গ্রুপ মেসেজ এবং প্রাইভেট মেসেজ—সব জায়গায় রিয়েকশন দেবে
 @bot.channel_post_handler(func=lambda message: True)
 @bot.message_handler(func=lambda message: True)
 def auto_react(message):
@@ -35,7 +35,7 @@ def auto_react(message):
             message_id=message.message_id,
             reaction=[reaction_obj]
         )
-        print(f"Message ID {message.message_id}-এ রিয়েকশন দেওয়া হয়েছে!")
+        print(f"Message ID {message.message_id}-এ রিয়েকশন সফল!")
     except Exception as e:
         print(f"এরর: {e}")
 
