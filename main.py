@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from threading import Thread
 from flask import Flask
 import telebot
@@ -29,29 +30,37 @@ BOT_CONFIGS = [
 
 MAIN_CHANNEL_LINK = "https://t.me/Gaming_Rahim_YT"
 
-# সব বট ইনিশিয়ালাইজ করা
-bot_instances = []
-for config in BOT_CONFIGS:
-    b = telebot.TeleBot(config["token"])
-    bot_instances.append({"bot": b, "emoji": config["emoji"]})
+# সব বট তৈরি করে রাখা
+bots = []
+for item in BOT_CONFIGS:
+    try:
+        b = telebot.TeleBot(item["token"], parse_mode=None)
+        bots.append({"bot": b, "emoji": item["emoji"]})
+    except Exception as e:
+        print(f"Bot init error: {e}")
 
-# মূল বট (প্রথমটি দিয়ে মেসেজ লিস্টেন করা হবে)
-main_bot = bot_instances[0]["bot"]
+# প্রথম বটটি মেইন বট হিসেবে মেসেজ শুনবে
+main_bot = bots[0]["bot"]
 
-# ৫টি বট থেকে এক সাথে রিয়্যাকশন দেওয়ার ফাংশন
+# ৫টি বট থেকে একসাথে রিয়্যাকশন দেওয়ার নিরাপদ ফাংশন
 def react_with_all_bots(chat_id, message_id):
-    for item in bot_instances:
-        try:
-            b = item["bot"]
-            emoji = item["emoji"]
-            reaction_obj = types.ReactionTypeEmoji(type="emoji", emoji=emoji)
-            b.set_message_reaction(
-                chat_id=chat_id,
-                message_id=message_id,
-                reaction=[reaction_obj]
-            )
-        except Exception as e:
-            print(f"Reaction Error: {e}")
+    def send_reactions():
+        for item in bots:
+            try:
+                b = item["bot"]
+                emoji = item["emoji"]
+                reaction_obj = types.ReactionTypeEmoji(type="emoji", emoji=emoji)
+                b.set_message_reaction(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    reaction=[reaction_obj]
+                )
+                time.sleep(0.2) # টেলিগ্রাম লিমিট এড়াতে হালকা বিরতি
+            except Exception as e:
+                print(f"Reaction Error: {e}")
+
+    # রিয়্যাকশন পাঠানোর কাজ ব্যাকগ্রাউন্ডে হবে
+    Thread(target=send_reactions).start()
 
 # Inline Buttons তৈরি করার ফাংশন
 def get_start_buttons(bot_username):
@@ -68,23 +77,20 @@ def get_start_buttons(bot_username):
     markup.add(btn_main)
     return markup
 
-# ------ স্টার্ট কমান্ড হ্যান্ডলার (সব বটের জন্যই কাজ করবে) ------
-for item in bot_instances:
-    current_bot = item["bot"]
-    
-    @current_bot.message_handler(commands=['start'])
-    def send_welcome(message, b=current_bot):
-        try:
-            bot_info = b.get_me()
-            buttons = get_start_buttons(bot_info.username)
-            text = (
-                f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
-                f"আমি একটি **Auto Reaction Bot**। আমাকে আপনার চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
-                f"অথবা আমাকে যেকোনো পোস্টের লিংক পাঠান—আমি রিয়্যাকশন দিয়ে দেব!"
-            )
-            b.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
-        except Exception as e:
-            print(f"Start Error: {e}")
+# ------ স্টার্ট কমান্ড হ্যান্ডলার (মেইন বটের জন্য) ------
+@main_bot.message_handler(commands=['start'])
+def send_welcome(message):
+    try:
+        bot_info = main_bot.get_me()
+        buttons = get_start_buttons(bot_info.username)
+        text = (
+            f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
+            f"আমি একটি **Multi Auto Reaction Bot**। আমাকে আপনার চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
+            f"অথবা আমাকে যেকোনো পোস্টের লিংক পাঠান—আমাদের ৫টি বট একসাথে রিয়্যাকশন দিয়ে দেবে!"
+        )
+        main_bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
+    except Exception as e:
+        print(f"Start Error: {e}")
 
 # ------ অটো রিয়্যাকশন এবং লিংক হ্যান্ডলার ------
 @main_bot.channel_post_handler(func=lambda message: True)
@@ -109,23 +115,13 @@ def handle_messages(message):
 
         if chat_id and msg_id:
             react_with_all_bots(chat_id, msg_id)
-            main_bot.reply_to(message, "✅ ৫টি বট থেকে সফলভাবে পোস্টটিতে রিয়্যাকশন দেওয়া হয়েছে!")
+            main_bot.reply_to(message, "✅ ৫টি বট থেকে সফলভাবে পোস্টটিতে রিয়্যাকশন দেওয়ার নির্দেশ পাঠানো হয়েছে!")
         else:
             react_with_all_bots(message.chat.id, message.message_id)
     else:
         # সাধারণ মেসেজ বা চ্যানেলের নতুন পোস্টে
         react_with_all_bots(message.chat.id, message.message_id)
 
-# একাধিক বট একসাথে পোলিং করার সিস্টেম
-def start_bot(bot_obj):
-    bot_obj.infinity_polling(skip_pending=True)
-
 if __name__ == "__main__":
-    print("সবগুলো বট সফলভাবে চালু হচ্ছে...")
-    
-    # ২য় থেকে ৫ম বট ব্যাকগ্রাউন্ড থ্রেডে চালু হবে
-    for item in bot_instances[1:]:
-        Thread(target=start_bot, args=(item["bot"],), daemon=True).start()
-        
-    # ১ম বট মূল থ্রেডে চলবে
+    print("মেইন বট সফলভাবে চালু হয়েছে...")
     main_bot.infinity_polling(skip_pending=True)
