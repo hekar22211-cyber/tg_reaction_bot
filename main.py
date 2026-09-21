@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Multi-Bot Reaction System is Active!"
+    return "All 5 Reaction Bots Active!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -30,22 +30,21 @@ BOT_CONFIGS = [
 
 MAIN_CHANNEL_LINK = "https://t.me/Gaming_Rahim_YT"
 
-# সব বট তৈরি করে রাখা
-bots = []
-for item in BOT_CONFIGS:
+# সব বট তৈরি করা
+bot_instances = []
+for config in BOT_CONFIGS:
     try:
-        b = telebot.TeleBot(item["token"], parse_mode=None)
-        bots.append({"bot": b, "emoji": item["emoji"]})
+        b = telebot.TeleBot(config["token"], parse_mode=None)
+        bot_instances.append({"bot": b, "emoji": config["emoji"]})
     except Exception as e:
         print(f"Bot init error: {e}")
 
-# প্রথম বটটি মেইন বট হিসেবে মেসেজ শুনবে
-main_bot = bots[0]["bot"]
+main_bot = bot_instances[0]["bot"]
 
-# ৫টি বট থেকে একসাথে রিয়্যাকশন দেওয়ার নিরাপদ ফাংশন
-def react_with_all_bots(chat_id, message_id):
-    def send_reactions():
-        for item in bots:
+# ৫টি বট থেকে পোস্ট বা মেসেজে রিয়্যাকশন দেওয়া
+def send_multi_reactions(chat_id, message_id):
+    def run():
+        for item in bot_instances:
             try:
                 b = item["bot"]
                 emoji = item["emoji"]
@@ -55,12 +54,10 @@ def react_with_all_bots(chat_id, message_id):
                     message_id=message_id,
                     reaction=[reaction_obj]
                 )
-                time.sleep(0.2) # টেলিগ্রাম লিমিট এড়াতে হালকা বিরতি
+                time.sleep(0.3) # টেলিগ্রাম সার্ভার লিমিট এড়াতে বিরতি
             except Exception as e:
-                print(f"Reaction Error: {e}")
-
-    # রিয়্যাকশন পাঠানোর কাজ ব্যাকগ্রাউন্ডে হবে
-    Thread(target=send_reactions).start()
+                print(f"Reaction fail for a bot: {e}")
+    Thread(target=run).start()
 
 # Inline Buttons তৈরি করার ফাংশন
 def get_start_buttons(bot_username):
@@ -77,28 +74,29 @@ def get_start_buttons(bot_username):
     markup.add(btn_main)
     return markup
 
-# ------ স্টার্ট কমান্ড হ্যান্ডলার (মেইন বটের জন্য) ------
-@main_bot.message_handler(commands=['start'])
-def send_welcome(message):
-    try:
-        bot_info = main_bot.get_me()
-        buttons = get_start_buttons(bot_info.username)
-        text = (
-            f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
-            f"আমি একটি **Multi Auto Reaction Bot**। আমাকে আপনার চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
-            f"অথবা আমাকে যেকোনো পোস্টের লিংক পাঠান—আমাদের ৫টি বট একসাথে রিয়্যাকশন দিয়ে দেবে!"
-        )
-        main_bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
-    except Exception as e:
-        print(f"Start Error: {e}")
+# সবকটি বটের জন্য /start কমান্ড সেটআপ
+for item in bot_instances:
+    current_bot = item["bot"]
+    @current_bot.message_handler(commands=['start'])
+    def send_welcome(message, b=current_bot):
+        try:
+            bot_info = b.get_me()
+            buttons = get_start_buttons(bot_info.username)
+            text = (
+                f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
+                f"আমি একটি **Multi Auto Reaction Bot**। আমাকে চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
+                f"অথবা পোস্টের লিংক পাঠান—আমাদের ৫টি বট রিয়্যাকশন দিয়ে দেবে!"
+            )
+            b.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
+        except Exception as e:
+            print(f"Start Error: {e}")
 
-# ------ অটো রিয়্যাকশন এবং লিংক হ্যান্ডলার ------
+# চ্যানেল ও গ্রুপের নতুন পোস্ট এবং লিংকের জন্য হ্যান্ডলার
 @main_bot.channel_post_handler(func=lambda message: True)
 @main_bot.message_handler(func=lambda message: True)
 def handle_messages(message):
     text = message.text or ""
     
-    # লিংক পাঠানো হলে
     if "t.me/" in text:
         pub_match = re.search(r't\.me/([^/]+)/(\d+)', text)
         priv_match = re.search(r't\.me/c/(\d+)/(\d+)', text)
@@ -114,14 +112,26 @@ def handle_messages(message):
             msg_id = int(pub_match.group(2))
 
         if chat_id and msg_id:
-            react_with_all_bots(chat_id, msg_id)
-            main_bot.reply_to(message, "✅ ৫টি বট থেকে সফলভাবে পোস্টটিতে রিয়্যাকশন দেওয়ার নির্দেশ পাঠানো হয়েছে!")
+            send_multi_reactions(chat_id, msg_id)
+            main_bot.reply_to(message, "✅ ৫টি বট থেকেই পোস্টটিতে রিয়্যাকশন দেওয়া হচ্ছে!")
         else:
-            react_with_all_bots(message.chat.id, message.message_id)
+            send_multi_reactions(message.chat.id, message.message_id)
     else:
-        # সাধারণ মেসেজ বা চ্যানেলের নতুন পোস্টে
-        react_with_all_bots(message.chat.id, message.message_id)
+        send_multi_reactions(message.chat.id, message.message_id)
+
+# প্রতিটি বটকে ব্যাকগ্রাউন্ডে পোলিং শুরু করার কাজ
+def start_polling(bot_obj):
+    try:
+        bot_obj.infinity_polling(skip_pending=True)
+    except Exception as e:
+        print(f"Polling error: {e}")
 
 if __name__ == "__main__":
-    print("মেইন বট সফলভাবে চালু হয়েছে...")
+    print("৫টি বটই চালু করা হচ্ছে...")
+    
+    # ২য় থেকে ৫ নম্বর বট ব্যাকগ্রাউন্ড থ্রেডে চলবে
+    for item in bot_instances[1:]:
+        Thread(target=start_polling, args=(item["bot"],), daemon=True).start()
+        
+    # ১ম বট মূল থ্রেডে কাজ করবে
     main_bot.infinity_polling(skip_pending=True)
