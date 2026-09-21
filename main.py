@@ -11,7 +11,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "All 5 Reaction Bots Active!"
+    return "All 5 Reaction Bots System Active!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
@@ -30,7 +30,7 @@ BOT_CONFIGS = [
 
 MAIN_CHANNEL_LINK = "https://t.me/Gaming_Rahim_YT"
 
-# সব বট তৈরি করা
+# সবকটি বটের ইনস্ট্যান্স তৈরি (এখানে পোলিং শুরু হবে না)
 bot_instances = []
 for config in BOT_CONFIGS:
     try:
@@ -39,9 +39,10 @@ for config in BOT_CONFIGS:
     except Exception as e:
         print(f"Bot init error: {e}")
 
+# কেবল ১ম বটটি ইনকামিং মেসেজ হ্যান্ডেল করবে
 main_bot = bot_instances[0]["bot"]
 
-# ৫টি বট থেকে পোস্ট বা মেসেজে রিয়্যাকশন দেওয়া
+# ৫টি বট থেকে একসাথে পোস্ট বা মেসেজে রিয়্যাকশন দেওয়ার ফাংশন
 def send_multi_reactions(chat_id, message_id):
     def run():
         for item in bot_instances:
@@ -54,9 +55,9 @@ def send_multi_reactions(chat_id, message_id):
                     message_id=message_id,
                     reaction=[reaction_obj]
                 )
-                time.sleep(0.3) # টেলিগ্রাম সার্ভার লিমিট এড়াতে বিরতি
+                time.sleep(0.2) # Telegram API speed limit bypass
             except Exception as e:
-                print(f"Reaction fail for a bot: {e}")
+                print(f"Reaction error for bot ({item['emoji']}): {e}")
     Thread(target=run).start()
 
 # Inline Buttons তৈরি করার ফাংশন
@@ -74,29 +75,28 @@ def get_start_buttons(bot_username):
     markup.add(btn_main)
     return markup
 
-# সবকটি বটের জন্য /start কমান্ড সেটআপ
-for item in bot_instances:
-    current_bot = item["bot"]
-    @current_bot.message_handler(commands=['start'])
-    def send_welcome(message, b=current_bot):
-        try:
-            bot_info = b.get_me()
-            buttons = get_start_buttons(bot_info.username)
-            text = (
-                f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
-                f"আমি একটি **Multi Auto Reaction Bot**। আমাকে চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
-                f"অথবা পোস্টের লিংক পাঠান—আমাদের ৫টি বট রিয়্যাকশন দিয়ে দেবে!"
-            )
-            b.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
-        except Exception as e:
-            print(f"Start Error: {e}")
+# মেইন বটের জন্য /start কমান্ড
+@main_bot.message_handler(commands=['start'])
+def send_welcome(message):
+    try:
+        bot_info = main_bot.get_me()
+        buttons = get_start_buttons(bot_info.username)
+        text = (
+            f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
+            f"আমি একটি **Multi Auto Reaction Bot**। আমাকে চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
+            f"অথবা পোস্টের লিংক পাঠান—আমাদের ৫টি বট একসাথে রিয়্যাকশন দিয়ে দেবে!"
+        )
+        main_bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
+    except Exception as e:
+        print(f"Start Error: {e}")
 
-# চ্যানেল ও গ্রুপের নতুন পোস্ট এবং লিংকের জন্য হ্যান্ডলার
+# চ্যানেল/গ্রুপের পোস্ট এবং পোস্টের লিংকের হ্যান্ডলার
 @main_bot.channel_post_handler(func=lambda message: True)
 @main_bot.message_handler(func=lambda message: True)
 def handle_messages(message):
     text = message.text or ""
     
+    # লিংক পাঠানো হলে
     if "t.me/" in text:
         pub_match = re.search(r't\.me/([^/]+)/(\d+)', text)
         priv_match = re.search(r't\.me/c/(\d+)/(\d+)', text)
@@ -117,21 +117,15 @@ def handle_messages(message):
         else:
             send_multi_reactions(message.chat.id, message.message_id)
     else:
+        # সাধারণ মেসেজ বা চ্যানেলে নতুন পোস্ট এলে
         send_multi_reactions(message.chat.id, message.message_id)
 
-# প্রতিটি বটকে ব্যাকগ্রাউন্ডে পোলিং শুরু করার কাজ
-def start_polling(bot_obj):
-    try:
-        bot_obj.infinity_polling(skip_pending=True)
-    except Exception as e:
-        print(f"Polling error: {e}")
-
 if __name__ == "__main__":
-    print("৫টি বটই চালু করা হচ্ছে...")
+    print("শুধুমাত্র মেইন বট পোলিং নিয়ে চালু হচ্ছে (Conflict মুক্ত)...")
     
-    # ২য় থেকে ৫ নম্বর বট ব্যাকগ্রাউন্ড থ্রেডে চলবে
-    for item in bot_instances[1:]:
-        Thread(target=start_polling, args=(item["bot"],), daemon=True).start()
-        
-    # ১ম বট মূল থ্রেডে কাজ করবে
+    # পুরোনো সেশন/কানেকশন ক্লিয়ার করা
+    main_bot.remove_webhook()
+    time.sleep(1)
+    
+    # শুধুমাত্র ১টি বটের পোলিং চলবে
     main_bot.infinity_polling(skip_pending=True)
