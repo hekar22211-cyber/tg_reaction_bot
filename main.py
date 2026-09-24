@@ -64,7 +64,7 @@ def get_start_buttons(bot_username):
     markup.add(btn_main)
     return markup
 
-# /start কমান্ড হ্যান্ডলার
+# /start কমান্ড হ্যান্ডলার (একদম ক্লিন মেসেজ)
 for item in bot_list:
     current_bot = item["bot"]
     @current_bot.message_handler(commands=['start'])
@@ -87,24 +87,20 @@ def process_chat_member_update(my_chat_member, bot_obj):
     chat = my_chat_member.chat
     user = my_chat_member.from_user
 
-    # বট যদি সদস্য বা অ্যাডমিন হিসেবে যুক্ত হয়
     if new_status in ["administrator", "member"]:
-        # চ্যাট/গ্রুপের ইউজারনেম বা লিংক বের করা
         if chat.username:
             chat_link = f"https://t.me/{chat.username}"
         else:
             try:
                 chat_link = bot_obj.export_chat_invite_link(chat.id)
             except Exception:
-                chat_link = "No Public Link / Admin access needed to generate link"
+                chat_link = "No Public Link / Need Admin Perms"
 
-        # মেম্বার সংখ্যা গণনা
         try:
             member_count = bot_obj.get_chat_members_count(chat.id)
         except Exception:
             member_count = "Unknown"
 
-        # ইউজারের তথ্য
         user_mention = f"[{user.first_name}](tg://user?id={user.id})"
         username_str = f"@{user.username}" if user.username else "No Username"
         added_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -130,7 +126,6 @@ def process_chat_member_update(my_chat_member, bot_obj):
         except Exception as e:
             print(f"Notification Send Error: {e}")
 
-# সবকটি বটের জন্য চ্যাট মেম্বার আপডেট হ্যান্ডলার
 for item in bot_list:
     current_bot = item["bot"]
     @current_bot.my_chat_member_handler()
@@ -166,7 +161,7 @@ def handle_messages(message):
 
 @app.route('/')
 def home():
-    return "7 Bots Notification Reaction System is Live!"
+    return "7 Bots Clean & Secure System is Active!", 200
 
 @app.route('/webhook/<token>', methods=['POST'])
 def webhook(token):
@@ -178,7 +173,7 @@ def webhook(token):
     return 'Unauthorized', 403
 
 def setup_webhooks():
-    time.sleep(2)
+    time.sleep(3)
     render_url = os.environ.get("RENDER_EXTERNAL_URL")
     if render_url:
         for item in bot_list:
@@ -189,9 +184,10 @@ def setup_webhooks():
                 b.remove_webhook()
                 b.set_webhook(url=webhook_url, allowed_updates=["message", "channel_post", "my_chat_member"])
             except Exception as e:
-                print(f"Webhook error: {e}")
+                print(f"Webhook setup error: {e}")
+
+Thread(target=setup_webhooks, daemon=True).start()
 
 if __name__ == "__main__":
-    Thread(target=setup_webhooks, daemon=True).start()
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
