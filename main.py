@@ -33,8 +33,8 @@ def keep_alive():
 # ==========================================
 # Database & Configuration
 # ==========================================
-# শুরুতে খালি রাখা হলো যেন কোনো ফেক চ্যানেলের জন্য লক না হয়
-ADMIN_GROUPS = [] 
+# আপনার আসল চ্যানেল যুক্ত করা হলো
+ADMIN_GROUPS = ["@Gaming_Rahim_YT"] 
 
 REFERRAL_BONUS = 10.0
 MIN_WITHDRAW = 500.0
@@ -53,7 +53,7 @@ def get_user_data(user_id):
     return users[user_id]
 
 def check_join(user_id):
-    # অ্যাডমিন হলে চ্যানেল জয়েনিং চেক বাইপাস হবে
+    # অ্যাডমিন হলে জয়েনিং চেক বাইপাস হবে
     if user_id == ADMIN_ID:
         return True
         
@@ -83,8 +83,9 @@ def main_keyboard():
 def verify_keyboard():
     markup = types.InlineKeyboardMarkup()
     for idx, group in enumerate(ADMIN_GROUPS, 1):
-        link = f"https://t.me/{group.replace('@', '')}" if group.startswith('@') else group
-        markup.add(types.InlineKeyboardButton(text=f"📢 জয়েন করুন {idx}", url=link))
+        clean_username = group.replace('@', '')
+        link = f"https://t.me/{clean_username}"
+        markup.add(types.InlineKeyboardButton(text=f"📢 জয়েন করুন {idx} ({group})", url=link))
     markup.add(types.InlineKeyboardButton(text="✅ ভেরিফাই করুন", callback_data="check_verification"))
     return markup
 
@@ -174,9 +175,11 @@ def callback_verify(call):
             bot.delete_message(call.message.chat.id, call.message.message_id)
         except Exception:
             pass
+            
+        # ভেরিফাই করার পর মেসেজ পাঠানোর সাথে সাথে কাস্টম বাটন নিচে সেট করে দেবে
         bot.send_message(
             user_id,
-            "ধন্যবাদ! আপনার অ্যাকাউন্ট ভেরিফাই হয়েছে।",
+            "🎉 **ধন্যবাদ!** আপনার অ্যাকাউন্ট ভেরিফাই হয়েছে। নিচের মেনু থেকে অপশন সিলেক্ট করুন:",
             reply_markup=main_keyboard()
         )
     else:
