@@ -1,193 +1,241 @@
 import os
-import re
-import time
-from datetime import datetime
-from threading import Thread
-from flask import Flask, request
 import telebot
 from telebot import types
+from dotenv import load_dotenv
 
-# Render Web Server
-app = Flask(__name__)
+# .env ফাইল থেকে টোকেন লোড করা
+load_dotenv()
 
-# ------ ৭টি বটের টোকেন এবং ইমোজি সেটআপ ------
-BOT_CONFIGS = [
-    {"token": "8252013112:AAE-18UOcabbh9CgQPrMoQEV_9mppYv5iVo", "emoji": "🔥"},
-    {"token": "8844690824:AAHIMT-6Y4aviEtN9kCNKVYMnZE1Hxo1ixw", "emoji": "❤️"},
-    {"token": "8762438201:AAEcG7Sj1zDbodjQPUaQZObjm0_ycn5EsRs", "emoji": "👍"},
-    {"token": "8687924053:AAHgMaL8ltL64Lj_ggjgWsOxX_unBRhqDQI", "emoji": "🎉"},
-    {"token": "8835772612:AAF3GQ1C5YdEjp0y-T-rinwtqV3Buf2zQI4", "emoji": "😍"},
-    {"token": "8875207866:AAG8WsNHOljlMPkjL7DEZdevCq3N_a10NHI", "emoji": "👏"},
-    {"token": "8964970848:AAHJ__OgdkYlpjg-NICmMxsN5BXy5vY8X_8", "emoji": "⚡"}
-]
+TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAFJFPcf3_wZY4HHL54bPRYRZX4L7JgiEcc")
+ADMIN_ID = int(os.getenv("ADMIN_ID", "8454171811"))
 
-MAIN_CHANNEL_LINK = "https://t.me/Gaming_Rahim_YT"
+bot = telebot.TeleBot(TOKEN)
 
-# 👤 আপনার এডমিন টেলিগ্রাম ইউজার আইডি
-OWNER_ID = 8454171811
+# ==========================================
+# কনফিগারেশন ও মেমোরি ডাটাবেস
+# ==========================================
 
-bots = {}
-bot_list = []
+# আপনার চ্যানেল/গ্রুপের ইউজারনেমগুলো এখানে দিন
+ADMIN_GROUPS = ["@channel_or_group_1", "@channel_or_group_2"]
 
-for index, config in enumerate(BOT_CONFIGS):
-    b = telebot.TeleBot(config["token"], parse_mode=None)
-    item = {"bot": b, "emoji": config["emoji"], "id": index, "token": config["token"]}
-    bots[config["token"]] = item
-    bot_list.append(item)
+# রেফারেল বোনাস পরিমাণ (টাকা)
+REFERRAL_BONUS = 10.0
 
-main_bot = bot_list[0]["bot"]
+# ইউজার ডাটা সংরক্ষণের মেমোরি
+users = {}
 
-# ৭টি বট থেকে পোস্ট বা মেসেজে রিয়্যাকশন দেওয়ার ফাংশন
-def send_multi_reactions(chat_id, message_id):
-    def run():
-        for item in bot_list:
-            try:
-                b = item["bot"]
-                emoji = item["emoji"]
-                reaction_obj = types.ReactionTypeEmoji(type="emoji", emoji=emoji)
-                b.set_message_reaction(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    reaction=[reaction_obj]
-                )
-                time.sleep(0.1)
-            except Exception as e:
-                print(f"Reaction error: {e}")
-    Thread(target=run).start()
+def get_user_data(user_id):
+    """ইউজার ডাটা থাকলে রিটার্ন করে, না থাকলে নতুন তৈরি করে"""
+    if user_id not in users:
+        users[user_id] = {
+            "balance": 0.0,
+            "ref_by": None,
+            "referrals": 0,
+            "verified": False
+        }
+    return users[user_id]
 
-def get_start_buttons(bot_username):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    btn_channel = types.InlineKeyboardButton("➕ Add Channel", url=f"https://t.me/{bot_username}?startchannel=true")
-    btn_group = types.InlineKeyboardButton("➕ Add Group", url=f"https://t.me/{bot_username}?startgroup=true")
-    btn_main = types.InlineKeyboardButton("📢 Join Main Channel", url=MAIN_CHANNEL_LINK)
-    markup.add(btn_channel, btn_group)
-    markup.add(btn_main)
+# ==========================================
+# হেল্পার ফাংশন
+# ==========================================
+
+def check_join(user_id):
+    """ইউজার নির্দিষ্ট চ্যানেল/গ্রুপে জয়েন করেছে কিনা চেক করে"""
+    for group in ADMIN_GROUPS:
+        try:
+            member = bot.get_chat_member(group, user_id)
+            if member.status not in ['member', 'administrator', 'creator']:
+                return False
+        except Exception:
+            return False
+    return True
+
+# ==========================================
+# কিবোর্ড ও বাটন
+# ==========================================
+
+def main_keyboard():
+    """মূল মেনু কিবোর্ড"""
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    btn_profile = types.KeyboardButton("👤 প্রোফাইল")
+    btn_refer = types.KeyboardButton("🔗 রেফার")
+    btn_withdraw = types.KeyboardButton("💳 উইথড্র")
+    markup.add(btn_profile, btn_refer, btn_withdraw)
     return markup
 
-# /start কমান্ড হ্যান্ডলার (একদম ক্লিন মেসেজ)
-for item in bot_list:
-    current_bot = item["bot"]
-    @current_bot.message_handler(commands=['start'])
-    def send_welcome(message, b=current_bot):
+def verify_keyboard():
+    """গ্রুপ জয়েন ও ভেরিফাই বাটন"""
+    markup = types.InlineKeyboardMarkup()
+    for idx, group in enumerate(ADMIN_GROUPS, 1):
+        link = f"https://t.me/{group.replace('@', '')}" if group.startswith('@') else group
+        markup.add(types.InlineKeyboardButton(text=f"📢 জয়েন করুন {idx}", url=link))
+    markup.add(types.InlineKeyboardButton(text="✅ ভেরিফাই করুন", callback_data="check_verification"))
+    return markup
+
+def admin_keyboard():
+    """এডমিন প্যানেল কিবোর্ড"""
+    markup = types.InlineKeyboardMarkup()
+    markup.add(types.InlineKeyboardButton(text="📊 ইউজার লিস্ট ও তথ্য", callback_data="admin_users"))
+    markup.add(types.InlineKeyboardButton(text="🔗 গ্রুপ লিংকসমূহ", callback_data="admin_groups"))
+    return markup
+
+# ==========================================
+# কমান্ড হ্যান্ডলার
+# ==========================================
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    user_data = get_user_data(user_id)
+    
+    # রেফারেল আইডি প্রসেস করা
+    command_args = message.text.split()
+    if len(command_args) > 1 and not user_data['verified']:
         try:
-            bot_info = b.get_me()
-            buttons = get_start_buttons(bot_info.username)
-            text = (
-                f"👋 **হ্যালো {message.from_user.first_name}!**\n\n"
-                f"আমি একটি **Multi Auto Reaction Bot**। আমাকে চ্যানেল বা গ্রুপে অ্যাডমিন বানিয়ে দিন, "
-                f"অথবা পোস্টের লিংক পাঠান—আমাদের ৭টি বট একসাথে রিয়্যাকশন দিয়ে দেবে!"
-            )
-            b.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=buttons)
-        except Exception as e:
-            print(f"Start Error: {e}")
+            referrer_id = int(command_args[1])
+            if referrer_id != user_id and user_data['ref_by'] is None:
+                user_data['ref_by'] = referrer_id
+        except ValueError:
+            pass
 
-# 🔔 কোনো গ্রুপ বা চ্যানেলে বট যুক্ত হলে এডমিন আইডিতে বিস্তারিত নোটিফিকেশন পাঠানোর হ্যান্ডলার
-def process_chat_member_update(my_chat_member, bot_obj):
-    new_status = my_chat_member.new_chat_member.status
-    chat = my_chat_member.chat
-    user = my_chat_member.from_user
-
-    if new_status in ["administrator", "member"]:
-        if chat.username:
-            chat_link = f"https://t.me/{chat.username}"
-        else:
-            try:
-                chat_link = bot_obj.export_chat_invite_link(chat.id)
-            except Exception:
-                chat_link = "No Public Link / Need Admin Perms"
-
-        try:
-            member_count = bot_obj.get_chat_members_count(chat.id)
-        except Exception:
-            member_count = "Unknown"
-
-        user_mention = f"[{user.first_name}](tg://user?id={user.id})"
-        username_str = f"@{user.username}" if user.username else "No Username"
-        added_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S UTC")
-
-        text = (
-            f"🔔 **নতুন চ্যাটে বট যুক্ত হয়েছে!**\n\n"
-            f"📌 **চ্যাট/গ্রুপের বিস্তারিত:**\n"
-            f"• **নাম:** {chat.title}\n"
-            f"• **ID:** `{chat.id}`\n"
-            f"• **টাইপ:** {chat.type.capitalize()}\n"
-            f"• **মোট সদস্য:** {member_count}\n"
-            f"• **লিংক:** {chat_link}\n\n"
-            f"👤 **যুক্ত করেছে যে ইউজার:**\n"
-            f"• **নাম:** {user_mention}\n"
-            f"• **ইউজারনেম:** {username_str}\n"
-            f"• **ইউজার ID:** `{user.id}`\n\n"
-            f"🤖 **যে বট যুক্ত করা হয়েছে:** @{bot_obj.get_me().username}\n"
-            f"⏰ **সময়:** `{added_time}`"
+    if check_join(user_id):
+        user_data['verified'] = True
+        bot.send_message(
+            user_id,
+            "স্বাগতম! নিচের মেনু থেকে অপশন সিলেক্ট করুন:",
+            reply_markup=main_keyboard()
+        )
+    else:
+        bot.send_message(
+            user_id,
+            "⚠️ বটের সমস্ত সুবিধা পেতে অবশ্যই আমাদের নিচের ২টি গ্রুপে জয়েন করতে হবে:",
+            reply_markup=verify_keyboard()
         )
 
-        try:
-            main_bot.send_message(OWNER_ID, text, parse_mode="Markdown", disable_web_page_preview=True)
-        except Exception as e:
-            print(f"Notification Send Error: {e}")
-
-for item in bot_list:
-    current_bot = item["bot"]
-    @current_bot.my_chat_member_handler()
-    def handle_my_chat_member(my_chat_member, b=current_bot):
-        process_chat_member_update(my_chat_member, b)
-
-# অটো রিয়্যাকশন এবং পোস্ট লিঙ্ক হ্যান্ডলার
-@main_bot.channel_post_handler(func=lambda message: True)
-@main_bot.message_handler(func=lambda message: True)
-def handle_messages(message):
-    text = message.text or ""
-    if "t.me/" in text:
-        pub_match = re.search(r't\.me/([^/]+)/(\d+)', text)
-        priv_match = re.search(r't\.me/c/(\d+)/(\d+)', text)
-
-        chat_id = None
-        msg_id = None
-
-        if priv_match:
-            chat_id = int(f"-100{priv_match.group(1)}")
-            msg_id = int(priv_match.group(2))
-        elif pub_match and pub_match.group(1) != 'c':
-            chat_id = f"@{pub_match.group(1)}"
-            msg_id = int(pub_match.group(2))
-
-        if chat_id and msg_id:
-            send_multi_reactions(chat_id, msg_id)
-            main_bot.reply_to(message, "✅ ৭টি বট থেকেই পোস্টটিতে রিয়্যাকশন দেওয়া হচ্ছে!")
-        else:
-            send_multi_reactions(message.chat.id, message.message_id)
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id == ADMIN_ID:
+        bot.send_message(
+            message.chat.id,
+            "⚙️ **এডমিন প্যানেল:**",
+            parse_mode="Markdown",
+            reply_markup=admin_keyboard()
+        )
     else:
-        send_multi_reactions(message.chat.id, message.message_id)
+        bot.send_message(message.chat.id, "❌ আপনি এই বটের এডমিন নন।")
 
-@app.route('/')
-def home():
-    return "7 Bots Clean & Secure System is Active!", 200
+# ==========================================
+# কলব্যাক হ্যান্ডলার
+# ==========================================
 
-@app.route('/webhook/<token>', methods=['POST'])
-def webhook(token):
-    if token in bots:
-        json_str = request.get_data().decode('UTF-8')
-        update = telebot.types.Update.de_json(json_str)
-        bots[token]["bot"].process_new_updates([update])
-        return 'OK', 200
-    return 'Unauthorized', 403
+@bot.callback_query_handler(func=lambda call: call.data == "check_verification")
+def callback_verify(call):
+    user_id = call.from_user.id
+    user_data = get_user_data(user_id)
 
-def setup_webhooks():
-    time.sleep(3)
-    render_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if render_url:
-        for item in bot_list:
-            b = item["bot"]
-            token = item["token"]
-            webhook_url = f"{render_url}/webhook/{token}"
-            try:
-                b.remove_webhook()
-                b.set_webhook(url=webhook_url, allowed_updates=["message", "channel_post", "my_chat_member"])
-            except Exception as e:
-                print(f"Webhook setup error: {e}")
+    if check_join(user_id):
+        if not user_data['verified']:
+            user_data['verified'] = True
+            
+            # রেফার করার জন্য বোনাস প্রদান
+            if user_data['ref_by'] and user_data['ref_by'] in users:
+                ref_user = users[user_data['ref_by']]
+                ref_user['balance'] += REFERRAL_BONUS
+                ref_user['referrals'] += 1
+                try:
+                    bot.send_message(
+                        user_data['ref_by'],
+                        f"🎉 নতুন ইউজার ভেরিফাই করেছে! আপনি {REFERRAL_BONUS} BDT রেফার বোনাস পেয়েছেন।"
+                    )
+                except Exception:
+                    pass
 
-Thread(target=setup_webhooks, daemon=True).start()
+        bot.answer_callback_query(call.id, "✅ ভেরিফিকেশন সফল হয়েছে!")
+        try:
+            bot.delete_message(call.message.chat.id, call.message.message_id)
+        except Exception:
+            pass
+        bot.send_message(
+            user_id,
+            "ধন্যবাদ! আপনার অ্যাকাউন্ট সফলভাবে ভেরিফাই হয়েছে।",
+            reply_markup=main_keyboard()
+        )
+    else:
+        bot.answer_callback_query(call.id, "❌ আপনি এখনো সবগুলো গ্রুপে জয়েন করেননি!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
+def admin_callbacks(call):
+    if call.from_user.id != ADMIN_ID:
+        return
+
+    if call.data == "admin_users":
+        total_registered = len(users)
+        msg = f"👥 **মোট ইউজার সংখ্যা:** {total_registered}\n"
+        msg += "📈 **Monthly users:** 3753\n\n"
+        msg += "📋 **ইউজার তালিকা:**\n"
+        if not users:
+            msg += "কোনো ইউজার নিবন্ধিত নেই।"
+        else:
+            for uid, info in users.items():
+                msg += f"• ID: `{uid}` | Verified: {info['verified']}\n"
+        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+
+    elif call.data == "admin_groups":
+        msg = "🔗 **বর্তমান জয়েনিং গ্রুপসমূহ:**\n\n"
+        for idx, grp in enumerate(ADMIN_GROUPS, 1):
+            msg += f"{idx}. {grp}\n"
+        bot.send_message(call.message.chat.id, msg)
+
+# ==========================================
+# মেনু মেসেজ হ্যান্ডলার
+# ==========================================
+
+@bot.message_handler(func=lambda message: True)
+def handle_menu(message):
+    user_id = message.from_user.id
+    user_data = get_user_data(user_id)
+
+    # ভেরিফিকেশন চেক
+    if not check_join(user_id):
+        bot.send_message(
+            user_id,
+            "⚠️ সেবাটি ব্যবহার করতে আগে গ্রুপে জয়েন করুন।",
+            reply_markup=verify_keyboard()
+        )
+        return
+
+    text = message.text
+
+    if text == "👤 প্রোফাইল":
+        name = message.from_user.first_name
+        profile_msg = (
+            f"👤 **ইউজার প্রোফাইল**\n\n"
+            f"🏷 **নাম:** {name}\n"
+            f"🆔 **ইউজার আইডি:** `{user_id}`\n"
+            f"💰 **ব্যালেন্স:** {user_data['balance']} BDT\n"
+            f"👥 **মোট রেফার:** {user_data['referrals']}\n"
+            f"📉 **Monthly user:** 3753"
+        )
+        bot.send_message(user_id, profile_msg, parse_mode="Markdown")
+
+    elif text == "🔗 রেফার":
+        bot_username = bot.get_me().username
+        ref_link = f"https://t.me/{bot_username}?start={user_id}"
+        ref_msg = (
+            f"🔗 **আপনার রেফারেল লিংক:**\n`{ref_link}`\n\n"
+            f"🎁 প্রতি সফল রেফারে পাবেন {REFERRAL_BONUS} BDT (ইউজারকে গ্রুপে জয়েন করে ভেরিফাই করতে হবে)।"
+        )
+        bot.send_message(user_id, ref_msg, parse_mode="Markdown")
+
+    elif text == "💳 উইথড্র":
+        withdraw_msg = (
+            f"💳 **উইথড্র সিস্টেম**\n\n"
+            f"💰 আপনার বর্তমান ব্যালেন্স: {user_data['balance']} BDT\n"
+            f"⚠️ সর্বনিম্ন উইথড্র: ৫০ BDT\n\n"
+            f"উইথড্র করতে এডমিনের সাথে যোগাযোগ করুন।"
+        )
+        bot.send_message(user_id, withdraw_msg)
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    print("Bot starting...")
+    bot.infinity_polling()
