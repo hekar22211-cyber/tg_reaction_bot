@@ -2,29 +2,48 @@ import os
 import telebot
 from telebot import types
 from dotenv import load_dotenv
+from flask import Flask
+from threading import Thread
 
 # .env ফাইল থেকে টোকেন লোড করা
 load_dotenv()
 
-# বট টোকেন ও এডমিন আইডি
 TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAFisnF-SD7vAqlV0BtTvyuLwEbIyNF7tRg")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8454171811"))
 
 bot = telebot.TeleBot(TOKEN)
 
 # ==========================================
-# কনফিগারেশন ও মেমোরি ডাটাবেস
+# Flask Web Server (Render Port Binding এর জন্য)
 # ==========================================
 
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running successfully!"
+
+def run():
+    port = int(os.environ.get('PORT', 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run)
+    t.daemon = True
+    t.start()
+
+# ==========================================
+# কনফিগারেশন ও ডাটাবেস (মেমোরি)
+# ==========================================
+
+# জয়েনিং চ্যানেল/গ্রুপ লিস্ট (এডমিন যুক্ত বা ডিলিট করতে পারবেন)
 ADMIN_GROUPS = ["@channel_or_group_1", "@channel_or_group_2"]
 
-# ডিফল্ট রেফারেল বোনাস ও সর্বনিম্ন উইথড্র অ্যামাউন্ট
 REFERRAL_BONUS = 10.0
 MIN_WITHDRAW = 500.0
 
-# ইউজার ও প্রসেস ডাটা সংরক্ষণের মেমোরি
 users = {}
-user_states = {}  # উইথড্র ও এডমিন ইনপুট ট্র্যাকিংয়ের জন্য
+user_states = {}
 
 def get_user_data(user_id):
     if user_id not in users:
@@ -41,6 +60,8 @@ def get_user_data(user_id):
 # ==========================================
 
 def check_join(user_id):
+    if not ADMIN_GROUPS:
+        return True
     for group in ADMIN_GROUPS:
         try:
             member = bot.get_chat_member(group, user_id)
@@ -74,6 +95,9 @@ def admin_keyboard():
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton(text="📊 ইউজার লিস্ট ও তথ্য", callback_data="admin_users"))
     markup.add(types.InlineKeyboardButton(text="🎁 রেফার বোনাস পরিবর্তন", callback_data="admin_set_bonus"))
+    markup.add(types.InlineKeyboardButton(text="➕ চ্যানেল যোগ করুন", callback_data="admin_add_channel"))
+    markup.add(types.InlineKeyboardButton(text="❌ চ্যানেল ডিলিট করুন", callback_data="admin_del_channel"))
+    markup.add(types.InlineKeyboardButton(text="🔗 চ্যানেল লিস্ট দেখুন", callback_data="admin_list_channel"))
     return markup
 
 def payment_method_keyboard():
@@ -106,14 +130,14 @@ def start(message):
         user_data['verified'] = True
         bot.send_message(
             user_id,
-            "✨ **স্বাগতম!** নিচের মেনু থেকে আপনার কাঙ্ক্ষিত অপশন সিলেক্ট করুন:",
+            "✨ **স্বাগতম!** নিচের মেনু থেকে অপশন সিলেক্ট করুন:",
             parse_mode="Markdown",
             reply_markup=main_keyboard()
         )
     else:
         bot.send_message(
             user_id,
-            "⚠️ বটের সমস্ত সুবিধা পেতে অবশ্যই নিচের অফিশিয়াল গ্রুপে জয়েন করতে হবে:",
+            "⚠️ বটের সুবিধা পেতে অবশ্যই আমাদের চ্যানেল/গ্রুপগুলোতে জয়েন করতে হবে:",
             reply_markup=verify_keyboard()
         )
 
@@ -141,7 +165,6 @@ def callback_verify(call):
     if check_join(user_id):
         if not user_data['verified']:
             user_data['verified'] = True
-            
             if user_data['ref_by'] and user_data['ref_by'] in users:
                 ref_user = users[user_data['ref_by']]
                 ref_user['balance'] += REFERRAL_BONUS
@@ -149,7 +172,7 @@ def callback_verify(call):
                 try:
                     bot.send_message(
                         user_data['ref_by'],
-                        f"🎉 **অভিনন্দন!** নতুন ইউজার ভেরিফাই করেছে। আপনি {REFERRAL_BONUS} BDT রেফার বোনাস পেয়েছেন।"
+                        f"🎉 **অভিনন্দন!** নতুন ইউজার ভেরিফাই করেছে। আপনি {REFERRAL_BONUS} BDT বোনাস পেয়েছেন।"
                     )
                 except Exception:
                     pass
@@ -161,11 +184,11 @@ def callback_verify(call):
             pass
         bot.send_message(
             user_id,
-            "ধন্যবাদ! আপনার অ্যাকাউন্ট সফলভাবে ভেরিফাই হয়েছে।",
+            "ধন্যবাদ! আপনার অ্যাকাউন্ট ভেরিফাই হয়েছে।",
             reply_markup=main_keyboard()
         )
     else:
-        bot.answer_callback_query(call.id, "❌ আপনি এখনো সবগুলো গ্রুপে জয়েন করেননি!", show_alert=True)
+        bot.answer_callback_query(call.id, "❌ আপনি এখনো সবগুলো চ্যানেল/গ্রুপে জয়েন করেননি!", show_alert=True)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("admin_"))
 def admin_callbacks(call):
@@ -175,7 +198,6 @@ def admin_callbacks(call):
     if call.data == "admin_users":
         total_registered = len(users)
         msg = f"👥 **মোট ইউজার সংখ্যা:** {total_registered}\n\n"
-        msg += "📋 **ইউজার তালিকা:**\n"
         if not users:
             msg += "কোনো ইউজার নিবন্ধিত নেই।"
         else:
@@ -185,10 +207,33 @@ def admin_callbacks(call):
 
     elif call.data == "admin_set_bonus":
         user_states[call.from_user.id] = {"action": "set_bonus"}
+        bot.send_message(call.message.chat.id, "✏️ নতুন রেফার বোনাসের পরিমাণ লিখে সেন্ড করুন:")
+
+    elif call.data == "admin_add_channel":
+        user_states[call.from_user.id] = {"action": "add_channel"}
         bot.send_message(
             call.message.chat.id,
-            "✏️ **নতুন রেফার বোনাসের পরিমাণ লিখুন (শুধু সংখ্যা):**\nযেমন: 10, 15, 20"
+            "➕ **নতুন চ্যানেল বা গ্রুপের ইউজারনেম দিন:**\nউদাহরণ: `@mychannel`"
         )
+
+    elif call.data == "admin_del_channel":
+        if not ADMIN_GROUPS:
+            bot.send_message(call.message.chat.id, "❌ কোনো চ্যানেল যুক্ত নেই।")
+            return
+        user_states[call.from_user.id] = {"action": "del_channel"}
+        msg = "❌ **যে ইউজারনেমটি ডিলিট করতে চান তা লিখে সেন্ড করুন:**\n\n"
+        for grp in ADMIN_GROUPS:
+            msg += f"• `{grp}`\n"
+        bot.send_message(call.message.chat.id, msg, parse_mode="Markdown")
+
+    elif call.data == "admin_list_channel":
+        if not ADMIN_GROUPS:
+            msg = "🔗 কোনো চ্যানেল যুক্ত করা নেই।"
+        else:
+            msg = "🔗 **বর্তমান চ্যানেল/গ্রুপসমূহ:**\n\n"
+            for idx, grp in enumerate(ADMIN_GROUPS, 1):
+                msg += f"{idx}. {grp}\n"
+        bot.send_message(call.message.chat.id, msg)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("pay_"))
 def withdraw_method_select(call):
@@ -207,7 +252,7 @@ def withdraw_method_select(call):
     )
 
 # ==========================================
-# মেনু ও ইনপুট মেসেজ হ্যান্ডলার
+# ইনপুট ও মেনু হ্যান্ডলার
 # ==========================================
 
 @bot.message_handler(func=lambda message: True)
@@ -216,11 +261,10 @@ def handle_messages(message):
     text = message.text.strip()
     user_data = get_user_data(user_id)
 
-    # এডমিন ও উইথড্র ইনপুট প্রসেসিং
     if user_id in user_states:
         state = user_states[user_id]
         
-        # এডমিন বোনাস চেঞ্জ ইনপুট
+        # ১. রেফার বোনাস পরিবর্তন
         if state.get("action") == "set_bonus" and user_id == ADMIN_ID:
             try:
                 global REFERRAL_BONUS
@@ -228,21 +272,44 @@ def handle_messages(message):
                 del user_states[user_id]
                 bot.send_message(user_id, f"✅ সফলভাবে রেফার বোনাস **{REFERRAL_BONUS} BDT** সেট করা হয়েছে।", parse_mode="Markdown")
             except ValueError:
-                bot.send_message(user_id, "❌ অনগ্রহ করে সঠিক সংখ্যা লিখুন (যেমন: 15)।")
+                bot.send_message(user_id, "❌ অনুগ্রহ করে সঠিক সংখ্যা লিখুন।")
             return
 
-        # উইথড্র নম্বর ইনপুট
+        # ২. চ্যানেল এড করা
+        elif state.get("action") == "add_channel" and user_id == ADMIN_ID:
+            if not text.startswith("@"):
+                bot.send_message(user_id, "❌ ইউজারনেমের শুরুতে অবশ্যই `@` থাকতে হবে। (যেমন: `@mychannel`)")
+                return
+            if text in ADMIN_GROUPS:
+                bot.send_message(user_id, "⚠️ এই চ্যানেলটি ইতিমধ্যেই যুক্ত আছে।")
+            else:
+                ADMIN_GROUPS.append(text)
+                bot.send_message(user_id, f"✅ চ্যানেল `{text}` সফলভাবে যুক্ত করা হয়েছে!", parse_mode="Markdown")
+            del user_states[user_id]
+            return
+
+        # ৩. চ্যানেল ডিলিট করা
+        elif state.get("action") == "del_channel" and user_id == ADMIN_ID:
+            if text in ADMIN_GROUPS:
+                ADMIN_GROUPS.remove(text)
+                bot.send_message(user_id, f"✅ চ্যানেল `{text}` সফলভাবে মুছে ফেলা হয়েছে!", parse_mode="Markdown")
+            else:
+                bot.send_message(user_id, "❌ এই ইউজারনেমটি তালিকায় খুঁজে পাওয়া যায়নি।")
+            del user_states[user_id]
+            return
+
+        # ৪. উইথড্র নম্বর ইনপুট
         elif state.get("action") == "withdraw_number":
             state["number"] = text
             state["action"] = "withdraw_amount"
             bot.send_message(
                 user_id,
-                f"✅ **নম্বর:** `{text}`\n\nএখন কত টাকা উইথড্র করতে চান তা লিখুন (সর্বনিম্ন ৫০০ BDT):",
+                f"✅ **নম্বর:** `{text}`\n\nকত টাকা উইথড্র করতে চান তা লিখুন (সর্বনিম্ন ৫০০ BDT):",
                 parse_mode="Markdown"
             )
             return
 
-        # উইথড্র অ্যামাউন্ট ইনপুট
+        # ৫. উইথড্র অ্যামাউন্ট ইনপুট
         elif state.get("action") == "withdraw_amount":
             try:
                 amount = float(text)
@@ -261,7 +328,6 @@ def handle_messages(message):
                     del user_states[user_id]
                     return
 
-                # সফল উইথড্র প্রসেস
                 method = state["method"]
                 num = state["number"]
                 user_data["balance"] -= amount
@@ -273,11 +339,10 @@ def handle_messages(message):
                     f"💳 মেথড: {method}\n"
                     f"📱 নম্বর: `{num}`\n"
                     f"💰 পরিমাণ: {amount} BDT\n\n"
-                    f"এডমিন খুব শীঘ্রই আপনার পেমেন্ট প্রসেস করবেন।",
+                    f"এডমিন খুব শীঘ্রই পেমেন্ট প্রসেস করবেন।",
                     parse_mode="Markdown"
                 )
 
-                # এডমিনকে নোটিফিকেশন পাঠানো
                 try:
                     bot.send_message(
                         ADMIN_ID,
@@ -292,14 +357,14 @@ def handle_messages(message):
                     pass
 
             except ValueError:
-                bot.send_message(user_id, "❌ অনুগ্রহ করে সঠিক সংখ্যা লিখুন (যেমন: 500)।")
+                bot.send_message(user_id, "❌ অনুগ্রহ করে সঠিক সংখ্যা লিখুন।")
             return
 
-    # সাধারণ মেনু বাটন হ্যান্ডলিং
+    # ইউজার মেনু
     if not check_join(user_id):
         bot.send_message(
             user_id,
-            "⚠️ সেবাটি ব্যবহার করতে আগে অফিশিয়াল গ্রুপে জয়েন করুন।",
+            "⚠️ সেবাটি ব্যবহার করতে আগে চ্যানেলগুলোতে জয়েন করুন।",
             reply_markup=verify_keyboard()
         )
         return
@@ -320,7 +385,7 @@ def handle_messages(message):
         ref_link = f"https://t.me/{bot_username}?start={user_id}"
         ref_msg = (
             f"🔗 **আপনার রেফারেল লিংক:**\n`{ref_link}`\n\n"
-            f"🎁 প্রতি সফল রেফারে পাবেন **{REFERRAL_BONUS} BDT** (ইউজারকে ভেরিফাই করতে হবে)।"
+            f"🎁 প্রতি সফল রেফারে পাবেন **{REFERRAL_BONUS} BDT**।"
         )
         bot.send_message(user_id, ref_msg, parse_mode="Markdown")
 
@@ -329,11 +394,12 @@ def handle_messages(message):
             f"💳 **উইথড্র সিস্টেম**\n\n"
             f"💰 আপনার বর্তমান ব্যালেন্স: **{user_data['balance']} BDT**\n"
             f"⚠️ সর্বনিম্ন উইথড্র: **৫০০ BDT**\n\n"
-            f"নিচ থেকে পেমেন্ট গ্রহণের মেথড সিলেক্ট করুন:"
+            f"নিচ থেকে পেমেন্ট মেথড সিলেক্ট করুন:"
         )
         bot.send_message(user_id, withdraw_msg, parse_mode="Markdown", reply_markup=payment_method_keyboard())
 
 if __name__ == "__main__":
-    print("Bot starting...")
+    print("Bot is starting with Flask web server...")
+    keep_alive()  # Render Web Service-এর জন্য ফ্ল্যাস্ক চালু করবে
     bot.remove_webhook()
     bot.infinity_polling(skip_pending_updates=True)
