@@ -332,4 +332,4 @@ def handle_messages(message):
 if __name__ == "__main__":
     keep_alive()
     bot.remove_webhook()
-    bot.infinity_polling(skip_pending_updates=True)
+    bot.infinity_polling()
