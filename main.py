@@ -13,7 +13,7 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", "8454171811"))
 bot = telebot.TeleBot(TOKEN)
 
 # ==========================================
-# Flask Server (Render-এ ফ্রিতে চালানোর জন্য)
+# Web Server for Render
 # ==========================================
 app = Flask('')
 
@@ -31,9 +31,9 @@ def keep_alive():
     t.start()
 
 # ==========================================
-# ডাটাবেস ও কনফিগারেশন
+# Database & Configuration
 # ==========================================
-ADMIN_GROUPS = ["@channel_or_group_1", "@channel_or_group_2"]
+ADMIN_GROUPS = ["@channel_or_group_1"]
 REFERRAL_BONUS = 10.0
 MIN_WITHDRAW = 500.0
 
@@ -63,7 +63,7 @@ def check_join(user_id):
     return True
 
 # ==========================================
-# কিবোর্ড
+# Keyboards
 # ==========================================
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
@@ -99,7 +99,7 @@ def payment_method_keyboard():
     return markup
 
 # ==========================================
-# হ্যান্ডলার
+# Command Handlers
 # ==========================================
 @bot.message_handler(commands=['start'])
 def start(message):
