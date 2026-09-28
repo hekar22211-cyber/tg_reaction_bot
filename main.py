@@ -7,7 +7,7 @@ from threading import Thread
 
 load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAEFgDiGTrKQrhPyROrHdtoJ_JoCL4ChSr0")
+TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAFisnF-SD7vAqlV0BtTvyuLwEbIyNF7tRg")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8454171811"))
 
 bot = telebot.TeleBot(TOKEN)
@@ -33,7 +33,9 @@ def keep_alive():
 # ==========================================
 # Database & Configuration
 # ==========================================
-ADMIN_GROUPS = ["@channel_or_group_1"]
+# শুরুতে খালি রাখা হলো যেন কোনো ফেক চ্যানেলের জন্য লক না হয়
+ADMIN_GROUPS = [] 
+
 REFERRAL_BONUS = 10.0
 MIN_WITHDRAW = 500.0
 
@@ -51,8 +53,13 @@ def get_user_data(user_id):
     return users[user_id]
 
 def check_join(user_id):
+    # অ্যাডমিন হলে চ্যানেল জয়েনিং চেক বাইপাস হবে
+    if user_id == ADMIN_ID:
+        return True
+        
     if not ADMIN_GROUPS:
         return True
+        
     for group in ADMIN_GROUPS:
         try:
             member = bot.get_chat_member(group, user_id)
