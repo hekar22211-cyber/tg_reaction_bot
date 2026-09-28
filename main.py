@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 # .env ফাইল থেকে টোকেন লোড করা
 load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAFJFPcf3_wZY4HHL54bPRYRZX4L7JgiEcc")
+TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAHOQY5ZzDYPsf2PG6KHRVSMDFK0sk39bRc")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8454171811"))
 
 bot = telebot.TeleBot(TOKEN)
