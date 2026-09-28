@@ -7,7 +7,7 @@ from threading import Thread
 
 load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAFisnF-SD7vAqlV0BtTvyuLwEbIyNF7tRg")
+TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAEFgDiGTrKQrhPyROrHdtoJ_JoCL4ChSr0")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "8454171811"))
 
 bot = telebot.TeleBot(TOKEN)
