@@ -12,6 +12,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     CallbackQuery, InlineKeyboardButton as Btn, InlineKeyboardMarkup as Kb, Message,
+    KeyboardButton, ReplyKeyboardMarkup,
 )
 
 # ======================= সেটিংস =======================
@@ -19,9 +20,14 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAHSxRX9uJley9PKJ2BMQmcvXWbUHBCtF
 OWNER_ID = 8454171811              # মূল এডমিন (একে বাদ দেওয়া যায় না)
 DEFAULT_CHANNEL = "https://t.me/Gaming_Rahim_YT"   # প্রথমবার চালালে এটা যোগ হবে
 DEFAULT_BONUS = 5.0
-DEFAULT_MIN_WITHDRAW = 50.0
+DEFAULT_MIN_WITHDRAW = 500.0
 CURRENCY = "৳"
 # =======================================================
+
+BTN_BAL = "💰 ব্যালেন্স"
+BTN_REF = "🔗 রেফার লিংক"
+BTN_WD = "💸 উইথড্র"
+BTN_ADMIN = "🛠 এডমিন প্যানেল"
 
 logging.basicConfig(level=logging.INFO)
 router = Router()
@@ -47,6 +53,10 @@ CREATE TABLE IF NOT EXISTS admins (user_id INTEGER PRIMARY KEY);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 """)
 db.commit()
+
+
+def fmt(x):
+    return f"{x:g}"
 
 
 def get_setting(key, default):
@@ -114,14 +124,14 @@ def join_kb():
 
 
 def main_kb(uid=0):
+    """নিচে স্থায়ীভাবে থাকা মেইন বাটন"""
     rows = [
-        [Btn(text="💰 ব্যালেন্স", callback_data="balance"),
-         Btn(text="🔗 রেফার লিংক", callback_data="refer")],
-        [Btn(text="💸 উইথড্র", callback_data="withdraw")],
+        [KeyboardButton(text=BTN_BAL), KeyboardButton(text=BTN_REF)],
+        [KeyboardButton(text=BTN_WD)],
     ]
     if is_admin(uid):
-        rows.append([Btn(text="🛠 এডমিন প্যানেল", callback_data="adm:main")])
-    return Kb(inline_keyboard=rows)
+        rows.append([KeyboardButton(text=BTN_ADMIN)])
+    return ReplyKeyboardMarkup(keyboard=rows, resize_keyboard=True, is_persistent=True)
 
 
 async def is_joined_all(bot: Bot, uid: int) -> bool:
@@ -134,6 +144,10 @@ async def is_joined_all(bot: Bot, uid: int) -> bool:
             logging.warning("মেম্বার চেক ব্যর্থ %s: %s", c["chat_id"], e)
             return False
     return True
+
+
+JOIN_TEXT = ("👋 স্বাগতম!\n\nবট ব্যবহার করতে নিচের সব চ্যানেল/গ্রুপে জয়েন করে "
+             "<b>✅ ভেরিফাই</b> বাটনে চাপ দিন।")
 
 
 # ----------------------------- /start -----------------------------
@@ -169,22 +183,23 @@ async def start(msg: Message, command: CommandObject, state: FSMContext):
     if user["verified"]:
         return await msg.answer("🏠 মেইন মেনু", reply_markup=main_kb(uid))
 
-    await msg.answer(
-        "👋 স্বাগতম!\n\nবট ব্যবহার করতে নিচের সব চ্যানেল/গ্রুপে জয়েন করে "
-        "<b>✅ ভেরিফাই</b> বাটনে চাপ দিন।",
-        reply_markup=join_kb(), parse_mode="HTML")
+    await msg.answer(JOIN_TEXT, reply_markup=join_kb(), parse_mode="HTML")
 
 
 @router.message(Command("cancel"))
 async def cancel(msg: Message, state: FSMContext):
     await state.clear()
-    await msg.answer("বাতিল করা হয়েছে।")
+    await msg.answer("বাতিল করা হয়েছে।", reply_markup=main_kb(msg.from_user.id))
 
 
 @router.callback_query(F.data == "home")
 async def go_home(cb: CallbackQuery, state: FSMContext):
     await state.clear()
-    await cb.message.edit_text("🏠 মেইন মেনু", reply_markup=main_kb(cb.from_user.id))
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+    await cb.message.answer("🏠 মেইন মেনু", reply_markup=main_kb(cb.from_user.id))
     await cb.answer()
 
 
@@ -211,7 +226,7 @@ async def verify(cb: CallbackQuery, bot: Bot):
 
     if ref:
         try:
-            await bot.send_message(ref, f"🎉 আপনার রেফারে একজন ভেরিফাই করেছে! +{b}{CURRENCY} বোনাস যোগ হয়েছে।")
+            await bot.send_message(ref, f"🎉 আপনার রেফারে একজন ভেরিফাই করেছে! +{fmt(b)}{CURRENCY} বোনাস যোগ হয়েছে।")
         except Exception:
             pass
 
@@ -220,8 +235,22 @@ async def verify(cb: CallbackQuery, bot: Bot):
     await cb.answer()
 
 
-# ----------------------------- ইউজার মেনু -----------------------------
-async def guard(cb: CallbackQuery):
+# ----------------------------- গার্ড -----------------------------
+async def guard_msg(msg: Message):
+    user = get_user(msg.from_user.id)
+    if not user:
+        await msg.answer("আগে /start দিন")
+        return None
+    if user["banned"]:
+        await msg.answer("🚫 আপনি ব্যান হয়েছেন।")
+        return None
+    if not user["verified"]:
+        await msg.answer(JOIN_TEXT, reply_markup=join_kb(), parse_mode="HTML")
+        return None
+    return user
+
+
+async def guard_cb(cb: CallbackQuery):
     user = get_user(cb.from_user.id)
     if not user or not user["verified"] or user["banned"]:
         await cb.answer("আগে /start দিয়ে ভেরিফাই করুন", show_alert=True)
@@ -229,79 +258,115 @@ async def guard(cb: CallbackQuery):
     return user
 
 
-@router.callback_query(F.data == "balance")
-async def balance(cb: CallbackQuery):
-    user = await guard(cb)
+# ----------------------------- মেইন মেনু বাটন -----------------------------
+# (এগুলো স্টেট হ্যান্ডলারের আগে থাকতে হবে, যাতে যেকোনো সময় বাটন কাজ করে)
+@router.message(F.text == BTN_BAL)
+async def balance(msg: Message, state: FSMContext):
+    await state.clear()
+    user = await guard_msg(msg)
     if not user:
         return
-    await cb.message.answer(
+    await msg.answer(
         f"💰 ব্যালেন্স: <b>{user['balance']:.2f}{CURRENCY}</b>\n"
         f"👥 মোট রেফার: <b>{user['referrals']}</b>", parse_mode="HTML")
-    await cb.answer()
 
 
-@router.callback_query(F.data == "refer")
-async def refer(cb: CallbackQuery):
-    user = await guard(cb)
+@router.message(F.text == BTN_REF)
+async def refer(msg: Message, state: FSMContext):
+    await state.clear()
+    user = await guard_msg(msg)
     if not user:
         return
-    link = f"https://t.me/{BOT_USERNAME}?start=ref_{cb.from_user.id}"
-    await cb.message.answer(
-        f"🔗 আপনার রেফার লিংক:\n{link}\n\nপ্রতি সফল রেফারে পাবেন {bonus()}{CURRENCY}\n"
+    link = f"https://t.me/{BOT_USERNAME}?start=ref_{msg.from_user.id}"
+    await msg.answer(
+        f"🔗 আপনার রেফার লিংক:\n{link}\n\nপ্রতি সফল রেফারে পাবেন {fmt(bonus())}{CURRENCY}\n"
         "(বন্ধু জয়েন করে ভেরিফাই করলে তবেই বোনাস)")
-    await cb.answer()
+
+
+@router.message(F.text == BTN_ADMIN)
+async def admin_btn(msg: Message, state: FSMContext):
+    if not is_admin(msg.from_user.id):
+        return
+    await state.clear()
+    await msg.answer("🛠 <b>এডমিন প্যানেল</b>", reply_markup=panel_kb(), parse_mode="HTML")
 
 
 # ----------------------------- উইথড্র -----------------------------
 class WithdrawState(StatesGroup):
+    number = State()
     amount = State()
-    method = State()
 
 
-@router.callback_query(F.data == "withdraw")
-async def withdraw(cb: CallbackQuery, state: FSMContext):
-    user = await guard(cb)
+@router.message(F.text == BTN_WD)
+async def withdraw(msg: Message, state: FSMContext):
+    await state.clear()
+    user = await guard_msg(msg)
     if not user:
         return
     if user["balance"] < min_wd():
-        return await cb.answer(
-            f"মিনিমাম উইথড্র {min_wd()}{CURRENCY}। আপনার ব্যালেন্স {user['balance']:.2f}{CURRENCY}",
-            show_alert=True)
-    await state.set_state(WithdrawState.amount)
-    await cb.message.answer(f"কত টাকা উইথড্র করবেন? (মিনিমাম {min_wd()})\nবাতিল করতে /cancel")
+        return await msg.answer(
+            f"❌ উইথড্র করতে কমপক্ষে {fmt(min_wd())}{CURRENCY} লাগবে।\n"
+            f"আপনার ব্যালেন্স: {user['balance']:.2f}{CURRENCY}\n\n"
+            f"আগে {fmt(min_wd())}{CURRENCY} করুন, তারপর উইথড্র দিন।")
+    kb = Kb(inline_keyboard=[
+        [Btn(text="🟣 বিকাশ", callback_data="wdm:bKash"),
+         Btn(text="🟠 নগদ", callback_data="wdm:Nagad")],
+    ])
+    await msg.answer("পেমেন্ট মেথড সিলেক্ট করুন:", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("wdm:"))
+async def wd_method(cb: CallbackQuery, state: FSMContext):
+    user = await guard_cb(cb)
+    if not user:
+        return
+    if user["balance"] < min_wd():
+        return await cb.answer(f"আগে {fmt(min_wd())}{CURRENCY} করুন", show_alert=True)
+    method = cb.data.split(":")[1]
+    await state.set_state(WithdrawState.number)
+    await state.update_data(method=method)
+    await cb.message.edit_text(f"✅ মেথড: {method}")
+    await cb.message.answer(f"আপনার {method} নম্বর লিখুন (১১ ডিজিট, যেমন 01XXXXXXXXX):\nবাতিল: /cancel")
     await cb.answer()
 
 
+@router.message(WithdrawState.number)
+async def w_number(msg: Message, state: FSMContext):
+    number = (msg.text or "").strip()
+    if not re.fullmatch(r"01[3-9]\d{8}", number):
+        return await msg.answer("❌ নম্বর ঠিক নেই। ১১ ডিজিটের সঠিক নম্বর লিখুন (যেমন 01712345678)।")
+    await state.update_data(number=number)
+    await state.set_state(WithdrawState.amount)
+    user = get_user(msg.from_user.id)
+    await msg.answer(
+        f"কত টাকা উইথড্র করবেন?\nমিনিমাম: {fmt(min_wd())}{CURRENCY}\n"
+        f"আপনার ব্যালেন্স: {user['balance']:.2f}{CURRENCY}")
+
+
 @router.message(WithdrawState.amount)
-async def w_amount(msg: Message, state: FSMContext):
+async def w_amount(msg: Message, state: FSMContext, bot: Bot):
     try:
         amt = float(msg.text)
     except (TypeError, ValueError):
         return await msg.answer("শুধু সংখ্যা লিখুন।")
-    user = get_user(msg.from_user.id)
-    if amt < min_wd() or amt > user["balance"]:
-        return await msg.answer("অবৈধ পরিমাণ। আবার লিখুন।")
-    await state.update_data(amount=amt)
-    await state.set_state(WithdrawState.method)
-    await msg.answer("পেমেন্ট মেথড ও নম্বর লিখুন (যেমন: bKash 01XXXXXXXXX)")
-
-
-@router.message(WithdrawState.method)
-async def w_method(msg: Message, state: FSMContext, bot: Bot):
-    data = await state.get_data()
-    amt = data["amount"]
     uid = msg.from_user.id
     user = get_user(uid)
+    if amt < min_wd():
+        return await msg.answer(f"❌ মিনিমাম {fmt(min_wd())}{CURRENCY}। আবার লিখুন।")
     if amt > user["balance"]:
-        await state.clear()
-        return await msg.answer("ব্যালেন্স যথেষ্ট নয়।")
+        return await msg.answer(f"❌ ব্যালেন্স যথেষ্ট নয়। আপনার ব্যালেন্স {user['balance']:.2f}{CURRENCY}।")
 
+    data = await state.get_data()
+    method_text = f"{data['method']} {data['number']}"
     db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (amt, uid))
-    cur = db.execute("INSERT INTO withdrawals (user_id, amount, method) VALUES (?,?,?)", (uid, amt, msg.text))
+    cur = db.execute("INSERT INTO withdrawals (user_id, amount, method) VALUES (?,?,?)",
+                     (uid, amt, method_text))
     db.commit()
     wid = cur.lastrowid
     await state.clear()
-    await msg.answer("✅ উইথড্র রিকোয়েস্ট জমা হয়েছে। এডমিন যাচাই করবেন।")
+    await msg.answer(
+        f"✅ উইথড্র রিকোয়েস্ট জমা হয়েছে।\n\n💵 {fmt(amt)}{CURRENCY}\n📱 {method_text}\n\nএডমিন যাচাই করবেন।",
+        reply_markup=main_kb(uid))
 
     kb = Kb(inline_keyboard=[[Btn(text="✅ Approve", callback_data=f"wd_ok_{wid}"),
                               Btn(text="❌ Reject", callback_data=f"wd_no_{wid}")]])
@@ -309,7 +374,7 @@ async def w_method(msg: Message, state: FSMContext, bot: Bot):
         try:
             await bot.send_message(
                 a, f"💸 নতুন উইথড্র #{wid}\nইউজার: {uid} (@{msg.from_user.username})\n"
-                   f"পরিমাণ: {amt}{CURRENCY}\nমেথড: {msg.text}", reply_markup=kb)
+                   f"পরিমাণ: {fmt(amt)}{CURRENCY}\nমেথড: {method_text}", reply_markup=kb)
         except Exception:
             pass
 
@@ -325,11 +390,11 @@ async def wd_decide(cb: CallbackQuery, bot: Bot):
 
     if action == "ok":
         db.execute("UPDATE withdrawals SET status='approved' WHERE id=?", (wid,))
-        text = f"✅ আপনার {w['amount']}{CURRENCY} উইথড্র অ্যাপ্রুভ হয়েছে।"
+        text = f"✅ আপনার {fmt(w['amount'])}{CURRENCY} উইথড্র অ্যাপ্রুভ হয়েছে।"
     else:
         db.execute("UPDATE withdrawals SET status='rejected' WHERE id=?", (wid,))
         db.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (w["amount"], w["user_id"]))
-        text = f"❌ আপনার {w['amount']}{CURRENCY} উইথড্র রিজেক্ট হয়েছে। টাকা ব্যালেন্সে ফেরত গেছে।"
+        text = f"❌ আপনার {fmt(w['amount'])}{CURRENCY} উইথড্র রিজেক্ট হয়েছে। টাকা ব্যালেন্সে ফেরত গেছে।"
     db.commit()
     try:
         await bot.send_message(w["user_id"], text)
@@ -440,11 +505,11 @@ async def admin_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
     # ---- বোনাস / মিনিমাম ----
     if act == "bonus":
         await state.set_state(AdminState.set_bonus)
-        return await cb.message.answer(f"বর্তমান বোনাস: {bonus()}{CURRENCY}\nনতুন পরিমাণ লিখুন।\nবাতিল: /cancel")
+        return await cb.message.answer(f"বর্তমান বোনাস: {fmt(bonus())}{CURRENCY}\nনতুন পরিমাণ লিখুন।\nবাতিল: /cancel")
 
     if act == "minwd":
         await state.set_state(AdminState.set_min)
-        return await cb.message.answer(f"বর্তমান মিনিমাম: {min_wd()}{CURRENCY}\nনতুন পরিমাণ লিখুন।\nবাতিল: /cancel")
+        return await cb.message.answer(f"বর্তমান মিনিমাম: {fmt(min_wd())}{CURRENCY}\nনতুন পরিমাণ লিখুন।\nবাতিল: /cancel")
 
     # ---- স্ট্যাটস ----
     if act == "stats":
@@ -470,7 +535,7 @@ async def admin_cb(cb: CallbackQuery, state: FSMContext, bot: Bot):
             kb = Kb(inline_keyboard=[[Btn(text="✅ Approve", callback_data=f"wd_ok_{w['id']}"),
                                       Btn(text="❌ Reject", callback_data=f"wd_no_{w['id']}")]])
             await cb.message.answer(
-                f"💸 #{w['id']}\nইউজার: {w['user_id']}\nপরিমাণ: {w['amount']}{CURRENCY}\nমেথড: {w['method']}",
+                f"💸 #{w['id']}\nইউজার: {w['user_id']}\nপরিমাণ: {fmt(w['amount'])}{CURRENCY}\nমেথড: {w['method']}",
                 reply_markup=kb)
 
 
@@ -524,7 +589,7 @@ async def st_bonus(msg: Message, state: FSMContext):
         return await msg.answer("শুধু সংখ্যা লিখুন।")
     set_setting("bonus", v)
     await state.clear()
-    await msg.answer(f"✅ রেফার বোনাস এখন {v}{CURRENCY}", reply_markup=panel_kb())
+    await msg.answer(f"✅ রেফার বোনাস এখন {fmt(v)}{CURRENCY}", reply_markup=panel_kb())
 
 
 @router.message(AdminState.set_min)
@@ -537,7 +602,7 @@ async def st_min(msg: Message, state: FSMContext):
         return await msg.answer("শুধু সংখ্যা লিখুন।")
     set_setting("min_withdraw", v)
     await state.clear()
-    await msg.answer(f"✅ মিনিমাম উইথড্র এখন {v}{CURRENCY}", reply_markup=panel_kb())
+    await msg.answer(f"✅ মিনিমাম উইথড্র এখন {fmt(v)}{CURRENCY}", reply_markup=panel_kb())
 
 
 @router.message(AdminState.broadcast)
