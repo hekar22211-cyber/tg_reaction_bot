@@ -19,6 +19,7 @@ from aiogram.types import (
 
 # ======================= সেটিংস =======================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAFVPMrQYDaAZbE7ms4MLcIJ_Ou0Ki746nI")   # Render Environment-এ BOT_TOKEN দিন
+DB_PATH = os.getenv("DB_PATH", "bot.db")   # Render Disk থাকলে DB_PATH=/data/bot.db দিন
 OWNER_ID = 8454171811              # মূল এডমিন (একে বাদ দেওয়া যায় না)
 DEFAULT_CHANNEL = "https://t.me/Gaming_Rahim_YT"   # প্রথমবার চালালে এটা যোগ হবে
 DEFAULT_BONUS = 5.0
@@ -38,7 +39,8 @@ BOT_USERNAME = ""
 esc = html.escape
 
 # ----------------------------- ডাটাবেস -----------------------------
-db = sqlite3.connect("bot.db")
+os.makedirs(os.path.dirname(DB_PATH) or ".", exist_ok=True)
+db = sqlite3.connect(DB_PATH)
 db.row_factory = sqlite3.Row
 db.executescript("""
 CREATE TABLE IF NOT EXISTS users (
@@ -97,6 +99,23 @@ def min_wd():
 
 def mention(uid, name):
     return f'<a href="tg://user?id={uid}">{esc(name or "User")}</a>'
+
+
+def set_verified(uid):
+    db.execute("UPDATE users SET verified=1 WHERE user_id=?", (uid,))
+    db.commit()
+
+
+def ensure_user_row(tg_user):
+    """ইউজার ডাটাবেসে না থাকলে (যেমন ডাটা মুছে গেলে) নিজে থেকে তৈরি করে।"""
+    u = get_user(tg_user.id)
+    if u:
+        return u, False
+    db.execute(
+        "INSERT INTO users (user_id, username, full_name) VALUES (?,?,?)",
+        (tg_user.id, tg_user.username, tg_user.full_name))
+    db.commit()
+    return get_user(tg_user.id), True
 
 
 async def notify_admins(bot: Bot, text, kb=None):
@@ -170,6 +189,45 @@ JOIN_TEXT = (
 )
 
 
+# ----------------------------- গার্ড (ডাটা হারালেও নিজে থেকে ঠিক করে) -----------------------------
+async def guard_msg(msg: Message, bot: Bot):
+    uid = msg.from_user.id
+    user, created = ensure_user_row(msg.from_user)
+    if is_admin(uid) and not user["verified"]:
+        set_verified(uid)
+        user = get_user(uid)
+    if user["banned"] and not is_admin(uid):
+        await msg.answer("🚫 আপনি ব্যান হয়েছেন।")
+        return None
+    if not user["verified"]:
+        # ডাটা হারিয়ে গেলে, ইউজার আগে থেকে জয়েন থাকলে অটো ভেরিফাই
+        if created and await is_joined_all(bot, uid):
+            set_verified(uid)
+            return get_user(uid)
+        await msg.answer(JOIN_TEXT, reply_markup=join_kb())
+        return None
+    return user
+
+
+async def guard_cb(cb: CallbackQuery, bot: Bot):
+    uid = cb.from_user.id
+    user, created = ensure_user_row(cb.from_user)
+    if is_admin(uid) and not user["verified"]:
+        set_verified(uid)
+        user = get_user(uid)
+    if user["banned"] and not is_admin(uid):
+        await cb.answer("🚫 আপনি ব্যান হয়েছেন", show_alert=True)
+        return None
+    if not user["verified"]:
+        if created and await is_joined_all(bot, uid):
+            set_verified(uid)
+            return get_user(uid)
+        await cb.message.answer(JOIN_TEXT, reply_markup=join_kb())
+        await cb.answer()
+        return None
+    return user
+
+
 # ----------------------------- /start -----------------------------
 @router.message(CommandStart())
 async def start(msg: Message, command: CommandObject, state: FSMContext, bot: Bot):
@@ -204,8 +262,7 @@ async def start(msg: Message, command: CommandObject, state: FSMContext, bot: Bo
 
     # এডমিনকে ভেরিফাই ছাড়াই ঢুকতে দেওয়া হয়
     if is_admin(uid) and not user["verified"]:
-        db.execute("UPDATE users SET verified=1 WHERE user_id=?", (uid,))
-        db.commit()
+        set_verified(uid)
         user = get_user(uid)
 
     if user["banned"] and not is_admin(uid):
@@ -239,24 +296,21 @@ async def go_home(cb: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "verify")
 async def verify(cb: CallbackQuery, bot: Bot):
     uid = cb.from_user.id
-    user = get_user(uid)
-    if not user:
-        return await cb.answer("আগে /start দিন", show_alert=True)
-    if user["banned"]:
+    user, _ = ensure_user_row(cb.from_user)
+    if user["banned"] and not is_admin(uid):
         return await cb.answer("🚫 আপনি ব্যান হয়েছেন", show_alert=True)
     if user["verified"]:
+        await cb.message.answer("🏠 <b>মেইন মেনু</b>", reply_markup=main_kb(uid))
         return await cb.answer("আপনি আগেই ভেরিফাইড", show_alert=True)
     if not await is_joined_all(bot, uid):
         return await cb.answer("❌ সব চ্যানেল/গ্রুপে জয়েন করুন, তারপর ভেরিফাই করুন", show_alert=True)
 
-    db.execute("UPDATE users SET verified=1 WHERE user_id=?", (uid,))
+    set_verified(uid)
     ref = user["referrer_id"]
     b = bonus()
-    if ref:
+    if ref and get_user(ref):
         db.execute("UPDATE users SET balance=balance+?, referrals=referrals+1 WHERE user_id=?", (b, ref))
-    db.commit()
-
-    if ref:
+        db.commit()
         rf = get_user(ref)
         try:
             await bot.send_message(
@@ -277,29 +331,6 @@ async def verify(cb: CallbackQuery, bot: Bot):
     await cb.message.edit_text("✅ <b>ভেরিফাই সম্পন্ন!</b>\nএখন বট ব্যবহার করতে পারবেন।")
     await cb.message.answer("🏠 <b>মেইন মেনু</b>\nনিচের বাটন থেকে বেছে নিন 👇", reply_markup=main_kb(uid))
     await cb.answer()
-
-
-# ----------------------------- গার্ড -----------------------------
-async def guard_msg(msg: Message):
-    user = get_user(msg.from_user.id)
-    if not user:
-        await msg.answer("আগে /start দিন")
-        return None
-    if user["banned"]:
-        await msg.answer("🚫 আপনি ব্যান হয়েছেন।")
-        return None
-    if not user["verified"]:
-        await msg.answer(JOIN_TEXT, reply_markup=join_kb())
-        return None
-    return user
-
-
-async def guard_cb(cb: CallbackQuery):
-    user = get_user(cb.from_user.id)
-    if not user or not user["verified"] or user["banned"]:
-        await cb.answer("আগে /start দিয়ে ভেরিফাই করুন", show_alert=True)
-        return None
-    return user
 
 
 # ----------------------------- প্রোফাইল -----------------------------
@@ -335,18 +366,18 @@ def profile_text(u):
 
 
 @router.message(F.text == BTN_PROFILE)
-async def profile(msg: Message, state: FSMContext):
+async def profile(msg: Message, state: FSMContext, bot: Bot):
     await state.clear()
-    user = await guard_msg(msg)
+    user = await guard_msg(msg, bot)
     if not user:
         return
     await msg.answer(profile_text(user))
 
 
 @router.message(F.text == BTN_REF)
-async def refer(msg: Message, state: FSMContext):
+async def refer(msg: Message, state: FSMContext, bot: Bot):
     await state.clear()
-    user = await guard_msg(msg)
+    user = await guard_msg(msg, bot)
     if not user:
         return
     link = f"https://t.me/{BOT_USERNAME}?start=ref_{msg.from_user.id}"
@@ -376,7 +407,7 @@ class WithdrawState(StatesGroup):
 @router.message(F.text == BTN_WD)
 async def withdraw(msg: Message, state: FSMContext, bot: Bot):
     await state.clear()
-    user = await guard_msg(msg)
+    user = await guard_msg(msg, bot)
     if not user:
         return
 
@@ -389,30 +420,23 @@ async def withdraw(msg: Message, state: FSMContext, bot: Bot):
         f"💰 ব্যালেন্স: {user['balance']:.2f}{CURRENCY}\n"
         f"{'✅ মিনিমাম পূরণ হয়েছে' if user['balance'] >= min_wd() else '⚠️ ব্যালেন্স কম'}")
 
-    if user["balance"] < min_wd():
-        return await msg.answer(
-            "❌ <b>ব্যালেন্স কম</b>\n"
-            f"{LINE}\n"
-            f"💰 আপনার ব্যালেন্স: {user['balance']:.2f}{CURRENCY}\n"
-            f"🎯 মিনিমাম উইথড্র: {fmt(min_wd())}{CURRENCY}\n\n"
-            f"আগে {fmt(min_wd())}{CURRENCY} করুন, তারপর উইথড্র দিন।")
-
     kb = Kb(inline_keyboard=[
         [Btn(text="🟣 বিকাশ", callback_data="wdm:bKash"),
          Btn(text="🟠 নগদ", callback_data="wdm:Nagad")],
     ])
     await msg.answer(
-        f"💸 <b>উইথড্র</b>\n{LINE}\n💰 ব্যালেন্স: {user['balance']:.2f}{CURRENCY}\n\nপেমেন্ট মেথড সিলেক্ট করুন 👇",
+        f"💸 <b>উইথড্র</b>\n{LINE}\n"
+        f"💰 ব্যালেন্স: {user['balance']:.2f}{CURRENCY}\n"
+        f"🎯 মিনিমাম: {fmt(min_wd())}{CURRENCY}\n\n"
+        "পেমেন্ট মেথড সিলেক্ট করুন 👇",
         reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("wdm:"))
-async def wd_method(cb: CallbackQuery, state: FSMContext):
-    user = await guard_cb(cb)
+async def wd_method(cb: CallbackQuery, state: FSMContext, bot: Bot):
+    user = await guard_cb(cb, bot)
     if not user:
         return
-    if user["balance"] < min_wd():
-        return await cb.answer("ব্যালেন্স কম", show_alert=True)
     method = cb.data.split(":")[1]
     await state.set_state(WithdrawState.number)
     await state.update_data(method=method)
@@ -429,7 +453,7 @@ async def w_number(msg: Message, state: FSMContext):
         return await msg.answer("❌ নম্বর ঠিক নেই। ১১ ডিজিটের সঠিক নম্বর লিখুন (যেমন 01712345678)।")
     await state.update_data(number=number)
     await state.set_state(WithdrawState.amount)
-    user = get_user(msg.from_user.id)
+    user, _ = ensure_user_row(msg.from_user)
     await msg.answer(
         f"💵 <b>কত টাকা উইথড্র করবেন?</b>\n{LINE}\n"
         f"মিনিমাম: {fmt(min_wd())}{CURRENCY}\n"
@@ -440,17 +464,41 @@ async def w_number(msg: Message, state: FSMContext):
 async def w_amount(msg: Message, state: FSMContext, bot: Bot):
     try:
         amt = float(msg.text)
+        if amt <= 0:
+            raise ValueError
     except (TypeError, ValueError):
-        return await msg.answer("শুধু সংখ্যা লিখুন।")
+        return await msg.answer("শুধু সঠিক সংখ্যা লিখুন।")
+
     uid = msg.from_user.id
-    user = get_user(uid)
+    user, _ = ensure_user_row(msg.from_user)
+    balance = user["balance"]
+    data = await state.get_data()
+    method_text = f"{data.get('method', '?')} {data.get('number', '?')}"
+
+    # সাবমিটের সময় ব্যালেন্স চেক
+    if balance < min_wd() or amt > balance:
+        await state.clear()
+        title = "ব্যালেন্স নাই" if balance <= 0 else "ব্যালেন্স কম"
+        await msg.answer(
+            f"❌ <b>{title}</b>\n{LINE}\n"
+            f"💰 আপনার ব্যালেন্স: {balance:.2f}{CURRENCY}\n"
+            f"💵 আপনি চেয়েছেন: {fmt(amt)}{CURRENCY}\n"
+            f"🎯 মিনিমাম উইথড্র: {fmt(min_wd())}{CURRENCY}\n\n"
+            "ব্যালেন্স বাড়ানোর পর আবার চেষ্টা করুন।",
+            reply_markup=main_kb(uid))
+        await notify_admins(
+            bot,
+            "⚠️ <b>ব্যর্থ উইথড্র চেষ্টা (ব্যালেন্স কম)</b>\n"
+            f"{LINE}\n"
+            f"👤 {mention(uid, msg.from_user.full_name)} (<code>{uid}</code>)\n"
+            f"💵 চেয়েছে: {fmt(amt)}{CURRENCY}\n"
+            f"📱 মেথড: <code>{esc(method_text)}</code>\n"
+            f"💰 ব্যালেন্স: {balance:.2f}{CURRENCY}")
+        return
+
     if amt < min_wd():
         return await msg.answer(f"❌ মিনিমাম {fmt(min_wd())}{CURRENCY}। আবার লিখুন।")
-    if amt > user["balance"]:
-        return await msg.answer(f"❌ ব্যালেন্স কম। আপনার ব্যালেন্স {user['balance']:.2f}{CURRENCY}।")
 
-    data = await state.get_data()
-    method_text = f"{data['method']} {data['number']}"
     db.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (amt, uid))
     cur = db.execute("INSERT INTO withdrawals (user_id, amount, method) VALUES (?,?,?)",
                      (uid, amt, method_text))
@@ -487,7 +535,7 @@ async def wd_decide(cb: CallbackQuery, bot: Bot):
     _, action, wid = cb.data.split("_")
     w = db.execute("SELECT * FROM withdrawals WHERE id=?", (wid,)).fetchone()
     if not w or w["status"] != "pending":
-        return await cb.answer("আগেই প্রসেস হয়েছে", show_alert=True)
+        return await cb.answer("আগেই প্রসেস হয়েছে বা পাওয়া যায়নি", show_alert=True)
 
     if action == "ok":
         db.execute("UPDATE withdrawals SET status='approved' WHERE id=?", (wid,))
