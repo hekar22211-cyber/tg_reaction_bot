@@ -4,6 +4,7 @@ import os
 import re
 import sqlite3
 
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, CommandStart, CommandObject
 from aiogram.fsm.context import FSMContext
@@ -14,7 +15,7 @@ from aiogram.types import (
 )
 
 # ======================= সেটিংস =======================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAHSxRX9uJley9PKJ2BMQmcvXWbUHBCtFvc")   # নতুন টোকেন এখানে বসান
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8940347817:AAHSxRX9uJley9PKJ2BMQmcvXWbUHBCtFvc")   # Render Environment-এ BOT_TOKEN দিন
 OWNER_ID = 8454171811              # মূল এডমিন (একে বাদ দেওয়া যায় না)
 DEFAULT_CHANNEL = "https://t.me/Gaming_Rahim_YT"   # প্রথমবার চালালে এটা যোগ হবে
 DEFAULT_BONUS = 5.0
@@ -104,7 +105,7 @@ if not db.execute("SELECT 1 FROM channels").fetchone():
     db.commit()
 
 
-# ----------------------------- ইউজার কিবোর্ড -----------------------------
+# ----------------------------- কিবোর্ড -----------------------------
 def join_kb():
     rows = [[Btn(text=f"📢 {c['title']} জয়েন করুন", url=c["url"])]
             for c in db.execute("SELECT * FROM channels")]
@@ -112,12 +113,15 @@ def join_kb():
     return Kb(inline_keyboard=rows)
 
 
-def main_kb():
-    return Kb(inline_keyboard=[
+def main_kb(uid=0):
+    rows = [
         [Btn(text="💰 ব্যালেন্স", callback_data="balance"),
          Btn(text="🔗 রেফার লিংক", callback_data="refer")],
         [Btn(text="💸 উইথড্র", callback_data="withdraw")],
-    ])
+    ]
+    if is_admin(uid):
+        rows.append([Btn(text="🛠 এডমিন প্যানেল", callback_data="adm:main")])
+    return Kb(inline_keyboard=rows)
 
 
 async def is_joined_all(bot: Bot, uid: int) -> bool:
@@ -154,10 +158,16 @@ async def start(msg: Message, command: CommandObject, state: FSMContext):
         db.commit()
         user = get_user(uid)
 
-    if user["banned"]:
+    # এডমিনকে ভেরিফাই ছাড়াই ঢুকতে দেওয়া হয়
+    if is_admin(uid) and not user["verified"]:
+        db.execute("UPDATE users SET verified=1 WHERE user_id=?", (uid,))
+        db.commit()
+        user = get_user(uid)
+
+    if user["banned"] and not is_admin(uid):
         return await msg.answer("🚫 আপনি ব্যান হয়েছেন।")
     if user["verified"]:
-        return await msg.answer("🏠 মেইন মেনু", reply_markup=main_kb())
+        return await msg.answer("🏠 মেইন মেনু", reply_markup=main_kb(uid))
 
     await msg.answer(
         "👋 স্বাগতম!\n\nবট ব্যবহার করতে নিচের সব চ্যানেল/গ্রুপে জয়েন করে "
@@ -169,6 +179,13 @@ async def start(msg: Message, command: CommandObject, state: FSMContext):
 async def cancel(msg: Message, state: FSMContext):
     await state.clear()
     await msg.answer("বাতিল করা হয়েছে।")
+
+
+@router.callback_query(F.data == "home")
+async def go_home(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.message.edit_text("🏠 মেইন মেনু", reply_markup=main_kb(cb.from_user.id))
+    await cb.answer()
 
 
 # ----------------------------- ভেরিফাই -----------------------------
@@ -199,7 +216,7 @@ async def verify(cb: CallbackQuery, bot: Bot):
             pass
 
     await cb.message.edit_text("✅ ভেরিফাই সম্পন্ন! এখন বট ব্যবহার করতে পারবেন।")
-    await cb.message.answer("🏠 মেইন মেনু", reply_markup=main_kb())
+    await cb.message.answer("🏠 মেইন মেনু", reply_markup=main_kb(uid))
     await cb.answer()
 
 
@@ -340,6 +357,7 @@ def panel_kb():
         [Btn(text="📊 স্ট্যাটস", callback_data="adm:stats"),
          Btn(text="📣 ব্রডকাস্ট", callback_data="adm:bcast")],
         [Btn(text="⏳ পেন্ডিং উইথড্র", callback_data="adm:wds")],
+        [Btn(text="🏠 মেইন মেনু", callback_data="home")],
     ])
 
 
@@ -491,7 +509,7 @@ async def st_add_admin(msg: Message, state: FSMContext, bot: Bot):
     await state.clear()
     await msg.answer(f"✅ {uid} এখন এডমিন।", reply_markup=panel_kb())
     try:
-        await bot.send_message(uid, "👮 আপনাকে এডমিন বানানো হয়েছে। /admin দিন।")
+        await bot.send_message(uid, "👮 আপনাকে এডমিন বানানো হয়েছে। /start দিন।")
     except Exception:
         pass
 
@@ -586,11 +604,22 @@ async def user_info(msg: Message, command: CommandObject):
         f"রেফার: {u['referrals']}\nরেফারার: {u['referrer_id']}\nব্যান: {bool(u['banned'])}")
 
 
-# ----------------------------- রান -----------------------------
+# ----------------------------- রান (Render-এর জন্য ওয়েব সার্ভারসহ) -----------------------------
+async def health(request):
+    return web.Response(text="OK")
+
+
 async def main():
     global BOT_USERNAME
     bot = Bot(BOT_TOKEN)
     BOT_USERNAME = (await bot.get_me()).username
+
+    app = web.Application()
+    app.router.add_get("/", health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 10000))).start()
+
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     await dp.start_polling(bot)
